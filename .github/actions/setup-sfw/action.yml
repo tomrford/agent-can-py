@@ -1,0 +1,48 @@
+name: Set up Socket Firewall
+description: Install the pinned native firewall without npm's unauthenticated latest-release lookup
+inputs:
+  token:
+    description: GitHub token used to download the public release
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64)
+            asset=sfw-free-linux-x86_64
+            digest=8898d0667c2165aecd695ca797473ec3a429d2ed807d4d0bf9e67c45817ea809 ;;
+          Linux-ARM64)
+            asset=sfw-free-linux-arm64
+            digest=4d02d1c1f5d6b6444721b0a67bd0e80aab182fe7f22d692570d1c14797602c47 ;;
+          macOS-X64)
+            asset=sfw-free-macos-x86_64
+            digest=6d2d73bc0343c2e14541514b3999dfdd0f8d2aca8c6c7654773da6f44bbf527b ;;
+          macOS-ARM64)
+            asset=sfw-free-macos-arm64
+            digest=010c5e8b88411c4e62d56aed3f232acf47b344da168ed54eaab69ec8c7d80af0 ;;
+          Windows-X64)
+            asset=sfw-free-windows-x86_64.exe
+            digest=8fa4e0fbd1d710dd13d5b04e6abcbc9e761c6a59a1c5f23a2cef42a88f6f04be ;;
+          *) echo "Unsupported firewall platform: $RUNNER_OS-$RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+        directory="$RUNNER_TEMP/agent-can-sfw"
+        mkdir -p "$directory"
+        gh release download v1.15.1 --repo SocketDev/sfw-free --pattern "$asset" --dir "$directory"
+        if [[ "$RUNNER_OS" == macOS ]]; then
+          actual=$(shasum -a 256 < "$directory/$asset")
+        else
+          actual=$(sha256sum < "$directory/$asset")
+        fi
+        if [[ "${actual%% *}" != "$digest" ]]; then
+          echo "SHA-256 mismatch for $asset" >&2
+          exit 1
+        fi
+        executable=sfw
+        if [[ "$RUNNER_OS" == Windows ]]; then executable=sfw.exe; fi
+        mv "$directory/$asset" "$directory/$executable"
+        chmod +x "$directory/$executable"
+        echo "$directory" >> "$GITHUB_PATH"

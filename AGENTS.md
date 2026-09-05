@@ -1,33 +1,44 @@
 # agent-can
 
-Agent-facing CAN bus session frontend for MCP clients. Primary consumer is an LLM agent over stdio MCP. Runtime access goes through `python-can`; DBC decode/encode goes through `cantools`.
-
-Hardware support follows the installed `python-can` backend and host drivers, such as PEAK PCAN on Windows or SocketCAN on Linux.
+Agent-facing CAN session server: a Go executable using `gocan`, exposed over stdio
+MCP with the official Go SDK. PyPI wheels contain the executable and a small Python
+launcher. There is no web UI or daemon.
 
 ## Build and check
 
-Use `uv` for Python commands.
+Before handoff, run the full gate unless the task is explicitly read-only or a
+host dependency is missing:
 
 ```sh
-uv run ruff check .
-uv run pytest
-uv build --no-sources
+go test -race ./...
+go vet ./...
+gofmt -l cmd internal
+sfw uv run ruff check .
+sfw uv run pytest
+sfw uv build --no-sources
 ```
 
-Before handoff, run the full gate above unless the task is explicitly read-only or a host dependency is missing.
+Rebuild the editable launcher after Go changes with
+`sfw uv sync --reinstall-package agent-can`. The Python tests exercise the installed
+executable over real stdio, including shutdown while transmitting and recording.
 
-## Key design decisions
+## Design
 
-- **Raw-first**: runtime state is raw CAN frames. DBC is a decode/encode overlay only.
-- **MCP process owns the session**: one live session per MCP process. Multi-bus means separate MCP processes on separate adapters.
-- **No silent zero-fill on semantic sends**: every signal must be specified. This is intentional safety.
+- Raw-first: `gocan.Capture` owns raw traffic; DBCs are a semantic overlay.
+- One live bus per MCP process. Sessions end with stdin EOF or process shutdown.
+- DBCs are immutable connect-time inputs, all validated before hardware opens.
+- Every active signal is required for semantic sends. Never silently pad raw FD
+  payloads or round large JSON integers through float64.
+- Acquisition is driver-owned. MCP and future frontends call the same session
+  operations; keep transport concerns out of the runtime.
+- Retention is 60 seconds logically, with gocan's chunk-granular storage pruning.
+- Use gocan's codecs, scheduling and recorder rather than duplicating them here.
 
 ## Release
 
-CI runs Ruff, pytest, and package build checks on pull requests and pushes. PyPI publishing uses GitHub trusted publishing from published GitHub releases:
-
-```sh
-gh release create v0.1.0 --target main --title v0.1.0 --generate-notes
-```
-
-Keep `pyproject.toml`, `src/agent_can/__init__.py`, and the tag version aligned.
+CI checks Go, the launcher, source builds and installed native wheels on Linux,
+macOS and Windows. Published non-prerelease GitHub releases trigger PyPI trusted
+publishing after the same matrix passes. Keep `pyproject.toml`,
+`src/agent_can/__init__.py` and the release tag aligned. The wheel build injects the
+package version into the Go executable. Build wheels natively; do not mislabel
+cross-compiled binaries with host wheel tags.

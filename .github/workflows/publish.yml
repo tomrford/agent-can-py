@@ -6,70 +6,61 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
+  validate:
     if: ${{ !github.event.release.prerelease }}
-    name: Publish to PyPI
     runs-on: ubuntu-latest
-    environment: pypi
-
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: ./.github/actions/setup-sfw
         with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Validate release tag
+          token: ${{ github.token }}
+      - name: Validate release version and ancestry
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          python - <<'PY'
+          sfw uv run --no-project --python 3.12 python - <<'PY'
           import os
           import pathlib
           import re
           import tomllib
 
-          tag = os.environ["RELEASE_TAG"]
           version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
-          init_text = pathlib.Path("src/agent_can/__init__.py").read_text()
-          match = re.search(r'^__version__ = "([^"]+)"$', init_text, re.MULTILINE)
-          init_version = match.group(1) if match else None
-          expected = f"v{version}"
-          if tag != expected or init_version != version:
-              raise SystemExit(
-                  f"version mismatch: tag={tag} pyproject={version} __version__={init_version}"
-              )
+          init = pathlib.Path("src/agent_can/__init__.py").read_text()
+          package_version = re.search(r'^__version__ = "([^"]+)"$', init, re.MULTILINE).group(1)
+          if os.environ["RELEASE_TAG"] != f"v{version}" or package_version != version:
+              raise SystemExit("Release tag, package metadata and launcher version must agree")
           PY
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}^{commit}")"
-          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-            echo "release tag ${RELEASE_TAG} is not reachable from origin/main"
-            exit 1
-          fi
-
-      - name: Install dependencies
-        run: uv sync --locked --dev
-
-      - name: Ruff
-        run: uv run ruff check .
-
-      - name: Tests
-        run: uv run pytest
-
-      - name: Build package
-        run: uv build --no-sources
-
-      - name: Publish package
-        run: uv publish
+          git merge-base --is-ancestor "${RELEASE_TAG}^{commit}" origin/main
+  build:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-sfw
+        with:
+          token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: sdist
+          path: dist
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Publish tested distributions
+        run: sfw uv publish

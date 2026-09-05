@@ -3,3 +3,6 @@
 .ruff_cache/
 __pycache__/
 *.py[cod]
+build/
+dist/
+src/agent_can/bin/
